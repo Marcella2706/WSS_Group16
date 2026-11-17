@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How the shell parses your payload</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --fg: #e8e8e4;
+    --dim: #7a8085;
+    --red: #e24b4a;
+    --red-bg: #2a1618;
+    --green: #8ef5a0;
+    --amber: #f0b854;
+    --blue: #a8d8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--fg);
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  .stage {
+    width: 90vw; max-width: 1400px;
+    display: flex; flex-direction: column; gap: 56px;
+    padding: 48px;
+  }
+  .title {
+    font-size: 36px; font-weight: 600; margin: 0;
+    opacity: 0; animation: fadeIn .6s ease forwards;
+  }
+  .label {
+    font-family: ui-monospace, "JetBrains Mono", monospace;
+    font-size: 16px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 2px;
+    margin-bottom: 14px;
+  }
+  .code {
+    font-family: ui-monospace, "JetBrains Mono", monospace;
+    font-size: 34px; line-height: 1.5;
+    padding: 36px 44px;
+    border-radius: 14px;
+    background: #1a1f26;
+    position: relative;
+  }
+  .prompt { color: var(--dim); }
+  .dev { color: var(--fg); }
+  .user-input { color: var(--blue); background: #15344a; padding: 2px 10px; border-radius: 4px; }
+
+  .block { opacity: 0; transform: translateY(16px); animation: fadeUp .7s ease forwards; }
+  .b1 { animation-delay: .4s; }
+  .b2 { animation-delay: 2.6s; }
+
+  /* The injected payload typewriter effect */
+  .typed-wrap { display: inline-block; }
+  .caret {
+    display: inline-block; width: 12px; height: 32px;
+    background: var(--amber); vertical-align: -4px;
+    animation: blink 1s steps(2) infinite;
+    opacity: 0; animation-delay: 3.2s, 3.2s;
+    animation-name: appear, blink;
+    animation-duration: .1s, 1s;
+    animation-fill-mode: forwards, none;
+    animation-iteration-count: 1, infinite;
+    animation-timing-function: steps(1), steps(2);
+  }
+
+  .payload {
+    display: inline-block;
+    overflow: hidden; white-space: nowrap;
+    vertical-align: bottom;
+    width: 0;
+    animation: type 2.2s steps(22) forwards;
+    animation-delay: 3.3s;
+  }
+  .semi { color: var(--red); font-weight: 700; font-size: 44px; }
+  .injected { color: var(--amber); background: #3a2a0f; padding: 2px 10px; border-radius: 4px; }
+
+  /* Highlighting pulses */
+  .split-marker {
+    position: absolute;
+    top: -22px; bottom: -22px; width: 4px;
+    background: var(--red);
+    opacity: 0; transform: scaleY(0);
+    transform-origin: center;
+    animation: markerIn .5s ease forwards;
+    animation-delay: 6.0s;
+  }
+  .split-marker::before, .split-marker::after {
+    content: "";
+    position: absolute; left: 50%;
+    width: 24px; height: 24px;
+    border: 3px solid var(--red);
+    transform: translateX(-50%) rotate(45deg);
+    background: var(--bg);
+  }
+  .split-marker::before { top: -12px; }
+  .split-marker::after { bottom: -12px; }
+
+  .labels-row {
+    display: flex; gap: 0; margin-top: 18px;
+    font-family: ui-monospace, monospace; font-size: 20px;
+    opacity: 0; animation: fadeIn .6s ease forwards;
+    animation-delay: 6.3s;
+  }
+  .tag {
+    padding: 10px 20px; border-radius: 6px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .tag-cmd1 { color: var(--green); }
+  .tag-cmd2 { color: var(--red); margin-left: 40px; }
+  .arrow { opacity: .5; }
+
+  .caption {
+    font-size: 24px; color: var(--dim); line-height: 1.5;
+    opacity: 0; animation: fadeIn .8s ease forwards;
+  }
+  .cap1 { animation-delay: 1.8s; }
+  .cap2 { animation-delay: 7.2s; }
+
+  @keyframes fadeIn { to { opacity: 1; } }
+  @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
+  @keyframes type { to { width: 100%; } }
+  @keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
+  @keyframes appear { to { opacity: 1; } }
+  @keyframes markerIn { to { opacity: 1; transform: scaleY(1); } }
+
+  .restart {
+    position: fixed; bottom: 24px; right: 24px;
+    background: #1a1f26; color: var(--fg);
+    border: 1px solid #333; padding: 10px 18px;
+    border-radius: 8px; font-family: inherit; font-size: 14px;
+    cursor: pointer;
+  }
+  .restart:hover { background: #242a32; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <h1 class="title">The shell can't tell developer code from user input.</h1>
+
+  <div class="block b1">
+    <div class="label">What the developer wrote</div>
+    <div class="code">
+      <span class="prompt">$</span> <span class="dev">ping -c 1</span> <span class="user-input">127.0.0.1</span>
+    </div>
+    <p class="caption cap1">One command. The user's input sits where an argument belongs.</p>
+  </div>
+
+  <div class="block b2">
+    <div class="label">What the attacker types as "host"</div>
+    <div class="code">
+      <span class="prompt">$</span> <span class="dev">ping -c 1</span>
+      <span class="typed-wrap">
+        <span class="user-input">127.0.0.1</span><span class="payload"><span class="semi">;</span> <span class="injected">bash -c 'sleep 5'</span></span><span class="caret"></span>
+      </span>
+      <span class="split-marker" style="left: calc(50% + 10px);"></span>
+    </div>
+    <div class="labels-row">
+      <span class="tag tag-cmd1">◀ ping command ends at the semicolon</span>
+      <span class="tag tag-cmd2">▶ attacker's new command starts here</span>
+    </div>
+    <p class="caption cap2">The semicolon is a shell separator. Everything after it runs as a brand-new command, as if the attacker had logged into the server.</p>
+  </div>
+</div>
+
+<button class="restart" onclick="location.reload()">↻ Replay</button>
+</body>
+</html>

